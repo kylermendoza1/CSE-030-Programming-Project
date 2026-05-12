@@ -9,16 +9,15 @@
 #include <ostream>
 #include <string>
 
-struct Edge;
+struct Edge;  // forward declaration
 
-// ─────────────────────────────────────────
-// Vertex
-// ─────────────────────────────────────────
+// ── Vertex ──────────────────────────────
 struct Vertex {
     std::string data;
     ArrayList<Edge *> edgeList;
 
     Vertex(std::string data) { this->data = data; }
+    ~Vertex();  // declared here, defined after Edge
 };
 
 inline std::ostream &operator<<(std::ostream &os, Vertex *v) {
@@ -26,14 +25,12 @@ inline std::ostream &operator<<(std::ostream &os, Vertex *v) {
     return os;
 }
 
-// ─────────────────────────────────────────
-// Edge  (now carries cost AND time)
-// ─────────────────────────────────────────
+// ── Edge ─────────────────────────────────
 struct Edge {
     Vertex *from;
     Vertex *to;
-    int cost;   // price in dollars
-    int time;   // travel time in minutes
+    int cost;
+    int time;
 
     Edge(Vertex *from, Vertex *to, int cost, int time) {
         this->from = from;
@@ -43,6 +40,13 @@ struct Edge {
     }
 };
 
+// ── Vertex destructor (defined HERE after Edge is complete) ──
+inline Vertex::~Vertex() {
+    for (int i = 0; i < edgeList.size(); i++) {
+        delete edgeList[i];
+    }
+}
+
 inline std::ostream &operator<<(std::ostream &os, Edge *e) {
     os << "(" << e->from << ", " << e->to
        << ") - cost: " << e->cost
@@ -51,15 +55,15 @@ inline std::ostream &operator<<(std::ostream &os, Edge *e) {
 }
 
 // ─────────────────────────────────────────
-// Waypoint  (tracks cost, time, and stops)
+// Waypoint
 // ─────────────────────────────────────────
 struct Waypoint {
     Waypoint *parent;
     Vertex   *vertex;
     ArrayList<Waypoint *> children;
-    int partialCost;   // total dollar cost from start
-    int partialTime;   // total minutes from start
-    int stops;         // number of hops from start
+    int partialCost;
+    int partialTime;
+    int stops;
 
     Waypoint(Vertex *v) {
         parent      = nullptr;
@@ -69,9 +73,11 @@ struct Waypoint {
         stops       = 0;
     }
 
-    void expand() {
+    // Registers every new waypoint in the tracking list
+    void expand(ArrayList<Waypoint *> &all) {
         for (int i = 0; i < vertex->edgeList.size(); i++) {
             Waypoint *temp    = new Waypoint(vertex->edgeList[i]->to);
+            all.append(temp);
             temp->parent      = this;
             temp->partialCost = partialCost + vertex->edgeList[i]->cost;
             temp->partialTime = partialTime + vertex->edgeList[i]->time;
@@ -94,7 +100,7 @@ inline std::ostream &operator<<(std::ostream &os, Waypoint *wp) {
 }
 
 // ─────────────────────────────────────────
-// Search mode enum
+// Search mode
 // ─────────────────────────────────────────
 enum SearchMode { BY_COST, BY_TIME, BY_STOPS };
 
@@ -115,28 +121,19 @@ struct Graph {
         x->edgeList.append(new Edge(x, y, cost, time));
     }
 
-    // ── Memory leak fix: destructor deletes all vertices (which delete their edges)
-    ~Graph() {
-        for (int i = 0; i < vertices.size(); i++) {
-            delete vertices[i];
-        }
-    }
-
-    // ── Helper: get the priority value of a waypoint based on search mode
     int priority(Waypoint *wp, SearchMode mode) {
-        if (mode == BY_COST)  return wp->partialCost;
-        if (mode == BY_TIME)  return wp->partialTime;
+        if (mode == BY_COST) return wp->partialCost;
+        if (mode == BY_TIME) return wp->partialTime;
         return wp->stops;
     }
 
-    // ── BFS (fewest stops) ────────────────────────────────────────────────────
-    Waypoint *fewestStops(Vertex *start, Vertex *destination) {
-        std::cout << "Running BFS (Fewest Stops)" << std::endl;
-
+    // ── BFS: fewest stops ─────────────────────────────────────────────────────
+    Waypoint *fewestStops(Vertex *start, Vertex *destination, ArrayList<Waypoint *> &all) {
         Queue<Waypoint *> frontier;
         HashTable<std::string> seen;
 
         Waypoint *first = new Waypoint(start);
+        all.append(first);
         frontier.enqueue(first);
         seen.insert(first->vertex->data);
 
@@ -144,12 +141,9 @@ struct Graph {
 
         while (!frontier.isEmpty()) {
             result = frontier.dequeue();
+            if (result->vertex == destination) return result;
 
-            if (result->vertex == destination) {
-                return result;
-            }
-
-            result->expand();
+            result->expand(all);
 
             for (int i = 0; i < result->children.size(); i++) {
                 if (!seen.search(result->children[i]->vertex->data)) {
@@ -158,21 +152,16 @@ struct Graph {
                 }
             }
         }
-
         return nullptr;
     }
 
-    // ── UCS (cheapest or fastest) ─────────────────────────────────────────────
-    Waypoint *ucs(Vertex *start, Vertex *destination, SearchMode mode) {
-        if (mode == BY_COST)
-            std::cout << "Running UCS (Cheapest)" << std::endl;
-        else
-            std::cout << "Running UCS (Fastest)"  << std::endl;
-
+    // ── UCS: cheapest or fastest ──────────────────────────────────────────────
+    Waypoint *ucs(Vertex *start, Vertex *destination, SearchMode mode, ArrayList<Waypoint *> &all) {
         ArrayList<Waypoint *> frontier;
         HashTable<std::string> seen;
 
         Waypoint *first = new Waypoint(start);
+        all.append(first);
         frontier.append(first);
         seen.insert(first->vertex->data);
 
@@ -180,35 +169,29 @@ struct Graph {
 
         while (frontier.size() != 0) {
             result = frontier.removeLast();
+            if (result->vertex == destination) return result;
 
-            if (result->vertex == destination) {
-                return result;
-            }
-
-            result->expand();
+            result->expand(all);
 
             for (int i = 0; i < result->children.size(); i++) {
                 if (!seen.search(result->children[i]->vertex->data)) {
                     frontier.append(result->children[i]);
 
-                    // Insertion-sort the new entry into place (descending so
-                    // removeLast() always pops the lowest-cost item)
+                    // Insertion sort descending so removeLast() pops lowest
                     int j = frontier.size() - 1;
                     while (j > 0 &&
                            priority(frontier.data[j], mode) >
                            priority(frontier.data[j - 1], mode)) {
-                        Waypoint *tmp       = frontier.data[j];
-                        frontier.data[j]    = frontier.data[j - 1];
-                        frontier.data[j-1]  = tmp;
+                        Waypoint *tmp      = frontier.data[j];
+                        frontier.data[j]   = frontier.data[j - 1];
+                        frontier.data[j-1] = tmp;
                         j--;
                     }
 
                     seen.insert(result->children[i]->vertex->data);
                 } else {
-                    // Check if this child is still in the frontier with a
-                    // worse (higher) priority value — replace it if so
+                    // Check if this child is in frontier with worse priority
                     Waypoint *worsePath = nullptr;
-
                     for (int k = 0; k < frontier.size(); k++) {
                         if (frontier[k]->vertex->data ==
                             result->children[i]->vertex->data) {
@@ -221,31 +204,26 @@ struct Graph {
                     }
 
                     if (worsePath) {
-                        // Re-parent any frontier nodes that pointed to the
-                        // worse waypoint
+                        // Re-parent frontier nodes pointing to worse waypoint
                         for (int k = 0; k < frontier.size(); k++) {
-                            if (frontier[k]->parent == worsePath) {
+                            if (frontier[k]->parent == worsePath)
                                 frontier[k]->parent = result->children[i];
-                            }
                         }
-
-                        // Swap in the better waypoint
+                        // Replace worse with better (no delete — tracked in all)
                         for (int k = 0; k < frontier.size(); k++) {
                             if (frontier[k] == worsePath) {
-                                delete frontier[k];
                                 frontier[k] = result->children[i];
                                 break;
                             }
                         }
-
                         // Re-sort frontier
                         for (int a = 1; a < frontier.size(); a++) {
                             int b = a;
                             while (b > 0 &&
                                    priority(frontier.data[b], mode) >
                                    priority(frontier.data[b-1], mode)) {
-                                Waypoint *x      = frontier.data[b];
-                                frontier.data[b] = frontier.data[b-1];
+                                Waypoint *x        = frontier.data[b];
+                                frontier.data[b]   = frontier.data[b-1];
                                 frontier.data[b-1] = x;
                                 b--;
                             }
@@ -254,54 +232,20 @@ struct Graph {
                 }
             }
         }
-
         return nullptr;
     }
 
     // ── Convenience wrappers ──────────────────────────────────────────────────
-    Waypoint *cheapest(Vertex *start, Vertex *destination) {
-        return ucs(start, destination, BY_COST);
+    Waypoint *cheapest(Vertex *start, Vertex *destination, ArrayList<Waypoint *> &all) {
+        return ucs(start, destination, BY_COST, all);
     }
 
-    Waypoint *fastest(Vertex *start, Vertex *destination) {
-        return ucs(start, destination, BY_TIME);
+    Waypoint *fastest(Vertex *start, Vertex *destination, ArrayList<Waypoint *> &all) {
+        return ucs(start, destination, BY_TIME, all);
     }
 
-    // ── Original BFS / DFS kept for reference ────────────────────────────────
-    Waypoint *bfs(Vertex *start, Vertex *destination) {
-        return fewestStops(start, destination);
-    }
-
-    Waypoint *dfs(Vertex *start, Vertex *destination) {
-        std::cout << "Running Depth-First Search" << std::endl;
-
-        Stack<Waypoint *> frontier;
-        HashTable<std::string> seen;
-
-        Waypoint *first = new Waypoint(start);
-        frontier.push(first);
-        seen.insert(first->vertex->data);
-
-        Waypoint *result = nullptr;
-
-        while (!frontier.isEmpty()) {
-            result = frontier.pop();
-
-            if (result->vertex == destination) {
-                return result;
-            }
-
-            result->expand();
-
-            for (int i = 0; i < result->children.size(); i++) {
-                if (!seen.search(result->children[i]->vertex->data)) {
-                    frontier.push(result->children[i]);
-                    seen.insert(result->children[i]->vertex->data);
-                }
-            }
-        }
-
-        return nullptr;
+    Waypoint *bfs(Vertex *start, Vertex *destination, ArrayList<Waypoint *> &all) {
+        return fewestStops(start, destination, all);
     }
 };
 
